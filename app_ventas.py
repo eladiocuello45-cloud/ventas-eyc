@@ -4,104 +4,146 @@ import os
 from datetime import datetime
 from fpdf import FPDF
 
-# 1. IDENTIDAD
+# ==========================================
+# CONFIGURACIÓN Y ESTILO
+# ==========================================
 EMPRESA = "Distribuciones E y C"
+IVA_PORC = 0.19
+CELULAR_EMPRESA = "3008756441" 
 
-st.set_page_config(page_title=f"Facturación {EMPRESA}", page_icon="💰", layout="wide")
-st.title(f"💰 {EMPRESA} - Facturación TAT")
+st.set_page_config(page_title=EMPRESA, page_icon="💰", layout="centered")
 
-# FUNCIÓN PARA FORMATO DE MONEDA ($ 8.500)
+st.markdown(f"<h1 style='text-align: center;'>💰 {EMPRESA}</h1>", unsafe_allow_html=True)
+st.markdown("<h4 style='text-align: center; color: gray;'>Facturación TAT con Buscador</h4>", unsafe_allow_html=True)
+
 def f_moneda(valor):
-    try:
-        return f"$ {int(float(valor)):,}".replace(",", ".")
-    except:
-        return "$ 0"
+    try: return f"$ {int(float(valor)):,}".replace(",", ".")
+    except: return "$ 0"
 
-# FUNCIÓN PARA EL PDF PROFESIONAL
-def crear_pdf(datos):
+# --- GENERADOR DE PDF ---
+def crear_pdf(df_agrupado, t_nombre, nombre_dueno):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(200, 10, txt=EMPRESA, ln=True, align='C')
-    pdf.ln(10)
+    pdf.ln(5)
     pdf.set_font("Arial", 'B', 11)
-    pdf.cell(0, 7, txt=f"Establecimiento: {datos['Tienda']}", ln=True)
-    pdf.set_font("Arial", '', 11)
-    pdf.cell(0, 7, txt=f"Propietario: {datos['Cliente']}", ln=True)
-    pdf.cell(0, 7, txt=f"Tel: {datos['Telefono']} | Dir: {datos['Direccion']}", ln=True)
-    pdf.cell(0, 7, txt=f"Fecha: {datos['Fecha']}", ln=True)
-    pdf.ln(10)
+    pdf.cell(0, 7, txt=f"ESTABLECIMIENTO: {t_nombre}", ln=True)
+    pdf.cell(0, 7, txt=f"PROPIETARIO: {nombre_dueno}", ln=True)
+    pdf.cell(0, 7, txt=f"FECHA: {datetime.now().strftime('%d/%m/%Y')}", ln=True)
+    pdf.ln(5)
+    
+    pdf.set_fill_color(230, 230, 230)
+    pdf.cell(90, 10, "Producto", 1, 0, 'L', True); pdf.cell(25, 10, "Cant", 1, 0, 'C', True); pdf.cell(35, 10, "Unitario", 1, 0, 'C', True); pdf.cell(40, 10, "Subtotal", 1, 1, 'C', True)
+    
+    total_neto = df_agrupado['Total'].sum()
+    pdf.set_font("Arial", '', 10)
+    for p, row in df_agrupado.iterrows():
+        unit = row['Total'] / row['Cant']
+        pdf.cell(90, 10, p, 1); pdf.cell(25, 10, str(int(row['Cant'])), 1, 0, 'C'); pdf.cell(35, 10, f_moneda(unit), 1, 0, 'R'); pdf.cell(40, 10, f_moneda(row['Total']), 1, 1, 'R')
+    
+    iva_v = total_neto * IVA_PORC
+    total_con_iva = total_neto + iva_v
+    
+    pdf.ln(5)
     pdf.set_font("Arial", 'B', 11)
-    pdf.cell(80, 10, "Producto", 1); pdf.cell(25, 10, "Cant", 1); pdf.cell(45, 10, "Total", 1); pdf.ln()
-    pdf.set_font("Arial", '', 11)
-    pdf.cell(80, 10, datos['Producto'], 1); pdf.cell(25, 10, str(datos['Cant']), 1); pdf.cell(45, 10, f_moneda(datos['Total']), 1); pdf.ln(12)
-    pdf.set_font("Arial", 'B', 11)
-    pdf.cell(105, 8, "Subtotal (Base):", 0); pdf.cell(45, 8, f_moneda(datos['Subtotal']), 0, ln=True)
-    pdf.cell(105, 8, "IVA (19%):", 0); pdf.cell(45, 8, f_moneda(datos['IVA']), 0, ln=True)
+    pdf.cell(150, 8, "SUBTOTAL:", 0, 0, 'R'); pdf.cell(40, 8, f_moneda(total_neto), 0, 1, 'R')
+    pdf.cell(150, 8, f"IVA ({int(IVA_PORC*100)}%):", 0, 0, 'R'); pdf.cell(40, 8, f_moneda(iva_v), 0, 1, 'R')
     pdf.set_font("Arial", 'B', 13)
-    pdf.cell(105, 10, "TOTAL A COBRAR:", 0); pdf.cell(45, 10, f_moneda(datos['Total']), 0, ln=True)
+    pdf.cell(150, 10, "TOTAL A PAGAR:", 0, 0, 'R'); pdf.cell(40, 10, f_moneda(total_con_iva), 0, 1, 'R')
     return pdf.output(dest='S').encode('latin-1')
 
-# 2. CARGA Y LIMPIEZA EXTREMA
+# ==========================================
+# GESTIÓN DE DATOS
+# ==========================================
 if os.path.exists("clientes_sucre.xlsx"):
-    df = pd.read_excel("clientes_sucre.xlsx")
+    df_c = pd.read_excel("clientes_sucre.xlsx").fillna("S/N")
+    df_c.columns = df_c.columns.str.strip() 
+    df_c = df_c.astype(str)
+else:
+    st.error("Archivo clientes_sucre.xlsx no encontrado."); st.stop()
+
+if os.path.exists("pedidos_realizados.csv"):
+    df_v = pd.read_csv("pedidos_realizados.csv")
+else:
+    df_v = pd.DataFrame(columns=["ID", "Fecha", "Tienda", "Producto", "Cant", "Total", "Estado"])
+
+fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+df_hoy = df_v[df_v['Fecha'] == fecha_hoy]
+
+# --- RUTA Y BUSCADOR (LUPITA) ---
+c1, c2 = st.columns(2)
+dia = c1.selectbox("📅 Día", ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"])
+zona = c2.selectbox("📍 Zona", sorted(df_c['Zona'].unique()))
+
+# 🔍 NUEVO: BUSCADOR GENERAL (Lupita)
+busqueda = st.text_input("🔍 Buscar cliente o tienda...", placeholder="Escribe el nombre aquí...")
+
+# Filtramos la lista de tiendas por día, zona y búsqueda
+mask = (df_c['Zona'] == zona) & (df_c['Frecuencia'].str.contains(dia))
+if busqueda:
+    mask = (df_c['Establecimiento'].str.contains(busqueda, case=False)) | (df_c.apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1))
+
+tiendas_filtradas = sorted(df_c[mask]["Establecimiento"].unique())
+
+opciones = []
+for t in tiendas_filtradas:
+    estados = df_hoy[df_hoy['Tienda'] == t]['Estado'].values
+    if "Venta" in estados: opciones.append(f"✅ {t}")
+    elif "No Compro" in estados: opciones.append(f"❌ {t}")
+    else: opciones.append(f"⚪ {t}")
+
+t_display = st.selectbox("🏪 Seleccione la Tienda", opciones)
+t_sel = t_display[2:] if t_display else None
+
+if t_sel:
+    info = df_c[df_c['Establecimiento'] == t_sel].iloc[0]
     
-    # SOLUCIÓN AL ERROR: Convertir todo a texto y limpiar nulos
-    df = df.fillna("").astype(str)
-    df.columns = [str(c).strip() for c in df.columns]
+    # BUSCADOR DINÁMICO DEL PROPIETARIO
+    nombre_dueno = "No definido"
+    for col in df_c.columns:
+        if any(x in col.upper() for x in ["NOMBRE", "CLIENTE", "PROP", "DUE"]):
+            nombre_dueno = info[col]
+            break
     
-    col_nombre = 'Nombre Cliente' if 'Nombre Cliente' in df.columns else 'Cliente'
+    st.info(f"👤 **Propietario:** {nombre_dueno} | 📞 **Tel:** {info.get('Telefono', 'S/T')} | 🏠 **Dir:** {info.get('Direccion', 'S/D')}")
 
-    dia_sel = st.sidebar.selectbox("📅 Día de Ruta", ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"])
-    zonas_validas = sorted([z.strip() for z in df['Zona'].unique() if z.strip() != ""])
-    zona_sel = st.sidebar.selectbox("👤 Zona", zonas_validas)
-    
-    df_ruta = df[(df['Zona'] == zona_sel) & (df['Frecuencia'].str.contains(dia_sel, na=False))]
-    
-    # FILTRO SEGURO PARA TIENDAS (Evita el error de 'float' en L81)
-    lista_tiendas = sorted([str(t).strip() for t in df_ruta["Establecimiento"].unique() if str(t).strip() != ""])
+    col_v, col_n = st.columns(2)
+    if col_n.button("🚫 MARCADO: NO COMPRÓ", use_container_width=True):
+        nueva = pd.DataFrame([{"ID": str(datetime.now().timestamp()), "Fecha": fecha_hoy, "Tienda": t_sel, "Producto": "N/A", "Cant": 0, "Total": 0, "Estado": "No Compro"}])
+        pd.concat([df_v, nueva]).to_csv("pedidos_realizados.csv", index=False); st.rerun()
 
-    if lista_tiendas:
-        t_sel = st.selectbox("🏪 Seleccione la Tienda", lista_tiendas)
-        res = df_ruta[df_ruta["Establecimiento"] == t_sel].iloc[0]
-        
-        v_nom = res[col_nombre] if res[col_nombre] != "" else "No registrado"
-        v_tel = res.get('Telefono', 'S/N')
-        v_dir = res.get('Direccion', 'S/D')
+    with st.form("registro"):
+        p = st.selectbox("📦 Producto", ["Gaseosa Mega 3L", "Agua Mineral 500ml", "Leche Bolsa", "Avena"])
+        c = st.number_input("Cantidad", min_value=1, step=1)
+        if st.form_submit_button("✅ REGISTRAR PRODUCTO", use_container_width=True):
+            precios = {"Gaseosa Mega 3L": 8500, "Agua Mineral 500ml": 1200, "Leche Bolsa": 3200, "Avena": 2500}
+            nueva = pd.DataFrame([{"ID": str(datetime.now().timestamp()), "Fecha": fecha_hoy, "Tienda": t_sel, "Producto": p, "Cant": c, "Total": precios[p]*c, "Estado": "Venta"}])
+            pd.concat([df_v, nueva]).to_csv("pedidos_realizados.csv", index=False); st.rerun()
 
-        st.info(f"👤 **Prop:** {v_nom} | 📞 **Tel:** {v_tel} | 🏠 **Dir:** {v_dir}")
+    v_tienda = df_hoy[(df_hoy['Tienda'] == t_sel) & (df_hoy['Estado'] == "Venta")]
+    if not v_tienda.empty:
+        df_agrupado = v_tienda.groupby("Producto").agg({'Cant': 'sum', 'Total': 'sum'})
+        st.write("---")
+        sub_t = df_agrupado['Total'].sum()
+        iva_v = sub_t * IVA_PORC
+        total_v = sub_t + iva_v
+        st.write(f"Subtotal: {f_moneda(sub_t)} | IVA (19%): {f_moneda(iva_v)}")
+        st.markdown(f"### TOTAL CON IVA: {f_moneda(total_v)}")
 
-        with st.form("registro"):
-            prod = st.selectbox("📦 Producto", ["Gaseosa Mega 3L", "Agua Mineral 500ml", "Leche Bolsa", "Avena"])
-            cant = st.number_input("🔢 Cantidad", min_value=1, step=1)
-            if st.form_submit_button("✅ REGISTRAR VENTA"):
-                precios = {"Gaseosa Mega 3L": 8500, "Agua Mineral 500ml": 1200, "Leche Bolsa": 3200, "Avena": 2500}
-                v_total = precios[prod] * cant
-                v_sub = v_total / 1.19
-                v_iva = v_total - v_sub
-                
-                venta = {
-                    "Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                    "Tienda": t_sel, "Cliente": v_nom, "Telefono": v_tel, "Direccion": v_dir,
-                    "Producto": prod, "Cant": cant, "Subtotal": int(v_sub), "IVA": int(v_iva), "Total": v_total
-                }
-                st.session_state.u_v = venta
-                pd.DataFrame([venta]).to_csv("pedidos_realizados.csv", mode='a', index=False, header=not os.path.exists("pedidos_realizados.csv"))
-                st.rerun()
+        ca, cb = st.columns(2)
+        pdf_file = crear_pdf(df_agrupado, t_sel, nombre_dueno)
+        ca.download_button("🖨️ PDF FACTURA", data=pdf_file, file_name=f"Factura_{t_sel}.pdf", use_container_width=True)
+        msg_cli = f"Hola {nombre_dueno}, su pedido es de {f_moneda(total_v)}. ¡Gracias!"
+        cb.link_button("📲 WHATSAPP", f"https://wa.me/57{info.get('Telefono')}?text={msg_cli.replace(' ','%20')}", use_container_width=True)
 
-        if 'u_v' in st.session_state:
-            st.download_button("📩 DESCARGAR FACTURA PDF", data=crear_pdf(st.session_state.u_v), file_name=f"Factura_{t_sel}.pdf")
-
-    st.divider()
-    if os.path.exists("pedidos_realizados.csv"):
-        st.subheader("📋 Resumen de Ventas del Día")
-        df_h = pd.read_csv("pedidos_realizados.csv")
-        df_v = df_h.copy()
-        for c in ['Subtotal', 'IVA', 'Total']:
-            df_v[c] = df_v[c].apply(f_moneda)
-        st.dataframe(df_v, use_container_width=True)
-        st.metric("💰 RECAUDO TOTAL", f_moneda(df_h['Total'].sum()))
-        if st.button("🗑️ BORRAR TODO EL HISTORIAL"):
-            os.remove("pedidos_realizados.csv")
-            if 'u_v' in st.session_state: del st.session_state.u_v
+# --- CIERRE DEL DÍA ---
+st.divider()
+if st.checkbox("⚙️ Cierre de Jornada"):
+    ventas_ok = df_hoy[df_hoy['Estado'] == "Venta"]
+    if not ventas_ok.empty:
+        total_dia = ventas_ok['Total'].sum() * (1 + IVA_PORC)
+        st.metric("Ventas Totales Hoy (Con IVA)", f_moneda(total_dia))
+        if st.button("🔴 CERRAR DÍA Y LIMPIAR DATOS", use_container_width=True):
+            if os.path.exists("pedidos_realizados.csv"): os.remove("pedidos_realizados.csv")
             st.rerun()
