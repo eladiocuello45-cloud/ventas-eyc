@@ -5,7 +5,7 @@ from datetime import datetime
 from fpdf import FPDF
 
 # ==========================================
-# CONFIGURACIÓN Y ESTILO
+# CONFIGURACIÓN
 # ==========================================
 EMPRESA = "Distribuciones E y C"
 IVA_PORC = 0.19
@@ -48,13 +48,13 @@ def crear_pdf(df_agrupado, t_nombre, nombre_dueno):
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(150, 8, "SUBTOTAL:", 0, 0, 'R'); pdf.cell(40, 8, f_moneda(total_neto), 0, 1, 'R')
-    pdf.cell(150, 8, f"IVA ({int(IVA_PORC*100)}%):", 0, 0, 'R'); pdf.cell(40, 8, f_moneda(iva_v), 0, 1, 'R')
+    pdf.cell(150, 8, f"IVA (19%):", 0, 0, 'R'); pdf.cell(40, 8, f_moneda(iva_v), 0, 1, 'R')
     pdf.set_font("Arial", 'B', 13)
     pdf.cell(150, 10, "TOTAL A PAGAR:", 0, 0, 'R'); pdf.cell(40, 10, f_moneda(total_con_iva), 0, 1, 'R')
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
-# GESTIÓN DE DATOS
+# GESTIÓN DE DATOS (PROTECCIÓN CONTRA ERRORES)
 # ==========================================
 if os.path.exists("clientes_sucre.xlsx"):
     df_c = pd.read_excel("clientes_sucre.xlsx").fillna("S/N")
@@ -63,23 +63,22 @@ if os.path.exists("clientes_sucre.xlsx"):
 else:
     st.error("Archivo clientes_sucre.xlsx no encontrado."); st.stop()
 
-if os.path.exists("pedidos_realizados.csv"):
-    df_v = pd.read_csv("pedidos_realizados.csv")
-else:
-    df_v = pd.DataFrame(columns=["ID", "Fecha", "Tienda", "Producto", "Cant", "Total", "Estado"])
+# Crear archivo de pedidos si no existe para evitar el error de la imagen
+if not os.path.exists("pedidos_realizados.csv"):
+    pd.DataFrame(columns=["ID", "Fecha", "Tienda", "Producto", "Cant", "Total", "Estado"]).to_csv("pedidos_realizados.csv", index=False)
 
+df_v = pd.read_csv("pedidos_realizados.csv")
 fecha_hoy = datetime.now().strftime("%d/%m/%Y")
 df_hoy = df_v[df_v['Fecha'] == fecha_hoy]
 
-# --- RUTA Y BUSCADOR (LUPITA) ---
+# --- RUTA Y BUSCADOR ---
 c1, c2 = st.columns(2)
 dia = c1.selectbox("📅 Día", ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"])
 zona = c2.selectbox("📍 Zona", sorted(df_c['Zona'].unique()))
 
-# 🔍 NUEVO: BUSCADOR GENERAL (Lupita)
+# 🔍 LUPITA
 busqueda = st.text_input("🔍 Buscar cliente o tienda...", placeholder="Escribe el nombre aquí...")
 
-# Filtramos la lista de tiendas por día, zona y búsqueda
 mask = (df_c['Zona'] == zona) & (df_c['Frecuencia'].str.contains(dia))
 if busqueda:
     mask = (df_c['Establecimiento'].str.contains(busqueda, case=False)) | (df_c.apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1))
@@ -88,10 +87,14 @@ tiendas_filtradas = sorted(df_c[mask]["Establecimiento"].unique())
 
 opciones = []
 for t in tiendas_filtradas:
-    estados = df_hoy[df_hoy['Tienda'] == t]['Estado'].values
-    if "Venta" in estados: opciones.append(f"✅ {t}")
-    elif "No Compro" in estados: opciones.append(f"❌ {t}")
-    else: opciones.append(f"⚪ {t}")
+    # Verificación segura para evitar el KeyError de la imagen
+    if not df_hoy.empty and 'Tienda' in df_hoy.columns:
+        estados = df_hoy[df_hoy['Tienda'] == t]['Estado'].values
+        if "Venta" in estados: opciones.append(f"✅ {t}")
+        elif "No Compro" in estados: opciones.append(f"❌ {t}")
+        else: opciones.append(f"⚪ {t}")
+    else:
+        opciones.append(f"⚪ {t}")
 
 t_display = st.selectbox("🏪 Seleccione la Tienda", opciones)
 t_sel = t_display[2:] if t_display else None
@@ -109,7 +112,7 @@ if t_sel:
     st.info(f"👤 **Propietario:** {nombre_dueno} | 📞 **Tel:** {info.get('Telefono', 'S/T')} | 🏠 **Dir:** {info.get('Direccion', 'S/D')}")
 
     col_v, col_n = st.columns(2)
-    if col_n.button("🚫 MARCADO: NO COMPRÓ", use_container_width=True):
+    if col_n.button("🚫 NO COMPRÓ", use_container_width=True):
         nueva = pd.DataFrame([{"ID": str(datetime.now().timestamp()), "Fecha": fecha_hoy, "Tienda": t_sel, "Producto": "N/A", "Cant": 0, "Total": 0, "Estado": "No Compro"}])
         pd.concat([df_v, nueva]).to_csv("pedidos_realizados.csv", index=False); st.rerun()
 
@@ -121,29 +124,31 @@ if t_sel:
             nueva = pd.DataFrame([{"ID": str(datetime.now().timestamp()), "Fecha": fecha_hoy, "Tienda": t_sel, "Producto": p, "Cant": c, "Total": precios[p]*c, "Estado": "Venta"}])
             pd.concat([df_v, nueva]).to_csv("pedidos_realizados.csv", index=False); st.rerun()
 
-    v_tienda = df_hoy[(df_hoy['Tienda'] == t_sel) & (df_hoy['Estado'] == "Venta")]
-    if not v_tienda.empty:
-        df_agrupado = v_tienda.groupby("Producto").agg({'Cant': 'sum', 'Total': 'sum'})
-        st.write("---")
-        sub_t = df_agrupado['Total'].sum()
-        iva_v = sub_t * IVA_PORC
-        total_v = sub_t + iva_v
-        st.write(f"Subtotal: {f_moneda(sub_t)} | IVA (19%): {f_moneda(iva_v)}")
-        st.markdown(f"### TOTAL CON IVA: {f_moneda(total_v)}")
+    if not df_hoy.empty and 'Tienda' in df_hoy.columns:
+        v_tienda = df_hoy[(df_hoy['Tienda'] == t_sel) & (df_hoy['Estado'] == "Venta")]
+        if not v_tienda.empty:
+            df_agrupado = v_tienda.groupby("Producto").agg({'Cant': 'sum', 'Total': 'sum'})
+            st.write("---")
+            sub_t = df_agrupado['Total'].sum()
+            iva_v = sub_t * IVA_PORC
+            total_v = sub_t + iva_v
+            st.write(f"Subtotal: {f_moneda(sub_t)} | IVA (19%): {f_moneda(iva_v)}")
+            st.markdown(f"### TOTAL CON IVA: {f_moneda(total_v)}")
 
-        ca, cb = st.columns(2)
-        pdf_file = crear_pdf(df_agrupado, t_sel, nombre_dueno)
-        ca.download_button("🖨️ PDF FACTURA", data=pdf_file, file_name=f"Factura_{t_sel}.pdf", use_container_width=True)
-        msg_cli = f"Hola {nombre_dueno}, su pedido es de {f_moneda(total_v)}. ¡Gracias!"
-        cb.link_button("📲 WHATSAPP", f"https://wa.me/57{info.get('Telefono')}?text={msg_cli.replace(' ','%20')}", use_container_width=True)
+            ca, cb = st.columns(2)
+            pdf_file = crear_pdf(df_agrupado, t_sel, nombre_dueno)
+            ca.download_button("🖨️ PDF FACTURA", data=pdf_file, file_name=f"Factura_{t_sel}.pdf", use_container_width=True)
+            msg_cli = f"Hola {nombre_dueno}, su pedido es de {f_moneda(total_v)}. ¡Gracias!"
+            cb.link_button("📲 WHATSAPP", f"https://wa.me/57{info.get('Telefono')}?text={msg_cli.replace(' ','%20')}", use_container_width=True)
 
 # --- CIERRE DEL DÍA ---
 st.divider()
 if st.checkbox("⚙️ Cierre de Jornada"):
-    ventas_ok = df_hoy[df_hoy['Estado'] == "Venta"]
-    if not ventas_ok.empty:
-        total_dia = ventas_ok['Total'].sum() * (1 + IVA_PORC)
-        st.metric("Ventas Totales Hoy (Con IVA)", f_moneda(total_dia))
-        if st.button("🔴 CERRAR DÍA Y LIMPIAR DATOS", use_container_width=True):
-            if os.path.exists("pedidos_realizados.csv"): os.remove("pedidos_realizados.csv")
-            st.rerun()
+    if not df_hoy.empty:
+        ventas_ok = df_hoy[df_hoy['Estado'] == "Venta"]
+        if not ventas_ok.empty:
+            total_dia = ventas_ok['Total'].sum() * (1 + IVA_PORC)
+            st.metric("Ventas Totales Hoy (Con IVA)", f_moneda(total_dia))
+    if st.button("🔴 CERRAR DÍA Y LIMPIAR DATOS", use_container_width=True):
+        if os.path.exists("pedidos_realizados.csv"): os.remove("pedidos_realizados.csv")
+        st.rerun()
